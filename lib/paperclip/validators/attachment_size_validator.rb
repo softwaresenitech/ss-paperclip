@@ -1,9 +1,9 @@
-require 'active_model/validations/numericality'
+require "active_model/validations/numericality"
 
 module Paperclip
   module Validators
     class AttachmentSizeValidator < ActiveModel::Validations::NumericalityValidator
-      AVAILABLE_CHECKS = [:less_than, :less_than_or_equal_to, :greater_than, :greater_than_or_equal_to]
+      AVAILABLE_CHECKS = [:less_than, :less_than_or_equal_to, :greater_than, :greater_than_or_equal_to].freeze
 
       def initialize(options)
         extract_options(options)
@@ -17,21 +17,34 @@ module Paperclip
       def validate_each(record, attr_name, value)
         base_attr_name = attr_name
         attr_name = "#{attr_name}_file_size".to_sym
+
+        error_attrs = []
+        case options[:add_validation_errors_to]
+        when :base
+          error_attrs << base_attr_name
+        when :attribute
+          error_attrs << attr_name
+        else
+          error_attrs << base_attr_name
+          error_attrs << attr_name
+        end
+
         value = record.send(:read_attribute_for_validation, attr_name)
 
         unless value.blank?
           options.slice(*AVAILABLE_CHECKS).each do |option, option_value|
             option_value = option_value.call(record) if option_value.is_a?(Proc)
             option_value = extract_option_value(option, option_value)
+            operator = ActiveModel::VERSION::MAJOR >= 7 ? COMPARE_CHECKS[option] : CHECKS[option]
 
-            unless value.send(CHECKS[option], option_value)
+            unless value.send(operator, option_value)
               error_message_key = options[:in] ? :in_between : option
-              [ attr_name, base_attr_name ].each do |error_attr_name|
-                record.errors.add(error_attr_name, error_message_key, filtered_options(value).merge(
-                  :min => min_value_in_human_size(record),
-                  :max => max_value_in_human_size(record),
-                  :count => human_size(option_value)
-                ))
+              error_attrs.each do |error_attr_name|
+                record.errors.add(error_attr_name, error_message_key, **filtered_options(value).merge(
+                                                                        min: min_value_in_human_size(record),
+                                                                        max: max_value_in_human_size(record),
+                                                                        count: human_size(option_value)
+                                                                      ))
               end
             end
           end
@@ -39,7 +52,7 @@ module Paperclip
       end
 
       def check_validity!
-        unless (AVAILABLE_CHECKS + [:in]).any? { |argument| options.has_key?(argument) }
+        unless (AVAILABLE_CHECKS + [:in]).any? { |argument| options.key?(argument) }
           raise ArgumentError, "You must pass either :less_than, :greater_than, or :in to the validator"
         end
       end
@@ -55,6 +68,10 @@ module Paperclip
             options[:less_than_or_equal_to] = range
             options[:greater_than_or_equal_to] = range
           end
+        end
+
+        unless options.key?(:add_validation_errors_to)
+          options[:add_validation_errors_to] = Paperclip.options[:add_validation_errors_to]
         end
       end
 
